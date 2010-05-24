@@ -1,0 +1,27 @@
+---
+abstract: 'MongoDB Session store for Catalyst'
+author:
+  - 'Cory G Watson <gphat@cpan.org>'
+build_requires:
+  ExtUtils::MakeMaker: 6.42
+  Test::More: 0
+configure_requires:
+  ExtUtils::MakeMaker: 6.42
+distribution_type: module
+generated_by: 'Module::Install version 0.94'
+license: perl
+meta-spec:
+  url: http://module-build.sourceforge.net/META-spec-v1.4.html
+  version: 1.4
+name: Catalyst-Plugin-Session-Store-MongoDB
+no_index:
+  directory:
+    - inc
+    - t
+requires:
+  Catalyst::Plugin::Session: 0.27
+  MongoDB: 0
+  Try::Tiny: 0.02
+resources:
+  license: http://dev.perl.org/licenses/
+version: 0.01
