@@ -1,15 +1,21 @@
-use inc::Module::Install;
+use ExtUtils::MakeMaker;
 
-name     'Catalyst-Plugin-Session-Store-MongoDB';
-all_from 'lib/Catalyst/Plugin/Session/Store/MongoDB.pm';
-author   q{Cory G Watson <gphat@cpan.org>};
-license  'perl';
+WriteMakefile(
+	NAME => 'Catalyst::Plugin::Session::Store::MongoDB',
+	ABSTRACT => 'MongoDB Session store for Catalyst',
+	AUTHOR => 'Stefan Völkel (bd@bc-bd.org)',
 
-build_requires 'Test::More';
+	VERSION_FROM => 'lib/Catalyst/Plugin/Session/Store/MongoDB.pm',
 
-requires 'MongoDB';
-requires 'Try::Tiny' => '0.02';
-requires 'Catalyst::Plugin::Session' => '0.27';
+	BUILD_REQUIRES => {
+		'String::Random' => 0,
+		'Test::More' => 0,
+	},
 
-WriteAll;
-
+	PREREQ_PM => {
+		'Catalyst::Plugin::Session' => '0.27',
+		'Data::Dumper' => 0,
+		'MongoDB' => 0,
+		'Moose' => 0,
+	},
+);

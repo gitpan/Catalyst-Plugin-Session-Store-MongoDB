@@ -1,45 +1,50 @@
 NAME
-    Catalyst::Plugin::Session::Store::MongoDB - MongoDB Session store for
+    Catalyst::Plugin::Session::Store::MongoDB - MongoDB session store for
     Catalyst
 
 SYNOPSIS
-        use Catalyst qw/
-            Session
-            Session::Store::MongoDB
-            Session::State::Foo
-        /;
-    
-        MyApp->config->{Plugin::Session} = {
-            expires => 3600,
-            mongodb_server => '127.0.0.1:6379',
-            mongodb_debug => 0 # or 1!
-        };
+    In your MyApp.pm:
 
-        # ... in an action:
+            use Catalyst qw/
+                    Session
+                    Session::Store::MongoDB
+                    Session::State::Cookie # or similar
+            /;
+
+    and in your MyApp.conf
+
+            <Plugin::Session>
+                    hostname foo            # defaults to localhost
+                    port 0815               # defaults to 27017
+                    dbname test             # defaults to catalyst
+                    collectionname s2       # defaults to session
+            </Plugin::Session>
+
+    Then you can use it as usual:
+
         $c->session->{foo} = 'bar'; # will be saved
 
 DESCRIPTION
     "Catalyst::Plugin::Session::Store::MongoDB" is a session storage plugin
-    for Catalyst that uses MongoDB (<http://www.mongodb.org>).
+    using MongoDB (<http://www.mongodb.org>) as it's backend.
 
-NOTES
+USAGE
     Expired Sessions
-        This store automatically expires sessions when they expire.
-
-WARNING
-    This module is currently untested, outside of the unit tests it ships
-    with. It will eventually be used with a busy site, but is currently
-    unproven. Patches are welcome!
+        This store automatically deletes sessions when they expire.
+        Additionally it implements the optional delete_expired_sessions()
+        method.
 
 AUTHOR
-    Cory G Watson, "<gphat at cpan.org>"
+        Stefan Völkel
+        bd@bc-bd.org
+        http://bc-bd.org
 
-COPYRIGHT & LICENSE
-    Copyright 2010 Cory G Watson.
+COPYRIGHT
+    Copyright 2010 Stefan Völkel <bd@bc-bd.org>
 
     This program is free software; you can redistribute it and/or modify it
-    under the terms of either: the GNU General Public License as published
-    by the Free Software Foundation; or the Artistic License.
+    under the terms of the GNU General Public License v2 as published by the
+    Free Software Foundation; or the Artistic License.
 
     See http://dev.perl.org/licenses/ for more information.
 

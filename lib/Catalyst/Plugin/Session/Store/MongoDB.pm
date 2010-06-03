@@ -1,113 +1,179 @@
 package Catalyst::Plugin::Session::Store::MongoDB;
-use warnings;
 use strict;
+use warnings;
 
-use base qw/
-    Class::Data::Inheritable
-    Catalyst::Plugin::Session::Store
-/;
-use MRO::Compat;
-use MIME::Base64 qw(encode_base64 decode_base64);
+our $VERSION = '0.02';
+
+use Moose;
+use namespace::autoclean;
+
 use MongoDB::Connection;
-use Storable qw/nfreeze thaw/;
+use Data::Dumper;
 
-our $VERSION = '0.01';
+BEGIN { extends 'Catalyst::Plugin::Session::Store' }
 
-__PACKAGE__->mk_classdata('_session_mongodb_conn');
-__PACKAGE__->mk_classdata('_session_mongodb_db');
-__PACKAGE__->mk_classdata('_session_mongodb_coll');
+has hostname => (
+	isa => 'Str',
+	is => 'ro',
+	lazy_build => 1,
+);
+
+has port => (
+	isa => 'Int',
+	is => 'ro',
+	lazy_build => 1,
+);
+
+has dbname => (
+	isa => 'Str',
+	is => 'ro',
+	lazy_build => 1,
+);
+
+has collectionname => (
+	isa => 'Str',
+	is => 'ro',
+	lazy_build => 1,
+);
+
+has '_collection' => (
+	isa => 'MongoDB::Collection',
+	is => 'ro',
+	lazy_build => 1,
+);
+
+has '_connection' => (
+	isa => 'MongoDB::Connection',
+	is => 'ro',
+	lazy_build => 1,
+);
+
+has '_db' => (
+	isa => 'MongoDB::Database',
+	is => 'ro',
+	lazy_build => 1,
+);
+
+sub _cfg_or_default {
+	my ($self, $name, $default) = @_;
+
+	my $cfg = $self->_session_plugin_config;
+
+	return $cfg->{$name} || $default;
+}
+
+sub _build_hostname {
+	my ($self) = @_;
+	return $self->_cfg_or_default('hostname', 'localhost');
+}
+
+sub _build_port {
+	my ($self) = @_;
+	return $self->_cfg_or_default('port', 27017);
+}
+
+sub _build_dbname {
+	my ($self) = @_;
+	return $self->_cfg_or_default('dbname', 'catalyst');
+}
+
+sub _build_collectionname {
+	my ($self) = @_;
+	return $self->_cfg_or_default('collectionname', 'session');
+}
+
+sub _build__collection {
+    my ($self) = @_;
+
+    return $self->_db->get_collection($self->collectionname);
+}
+
+sub _build__connection {
+    my ($self) = @_;
+
+    return MongoDB::Connection->new(
+        host => $self->hostname,
+        port => $self->port,
+    );
+}
+
+sub _build__db {
+    my ($self) = @_;
+
+    return $self->_connection->get_database($self->dbname);
+}
+
+sub _serialize {
+	my ($self, $data) = @_;
+
+	my $d = Data::Dumper->new([ $data ]);
+
+	return $d->Indent(0)->Purity(1)->Terse(1)->Quotekeys(0)->Dump;
+}
 
 sub get_session_data {
-    my ($c, $key) = @_;
+	my ($self, $key) = @_;
 
-    if(!defined($c->_session_mongodb_conn)) {
-        $c->_mongo_connect;
-    }
+	my ($prefix, $id) = split(/:/, $key);
 
-    if($key =~ /^expires:(.*)/) {
-        my $sid = $1;
-        my $data = $c->_session_mongodb_coll->find_one({ _id => $sid });
+	my $found = $self->_collection->find_one({ _id => $id },
+		{ $prefix => 1, 'expires' => 1 });
 
-        if(defined($data)) {
-            # Handle auto-expiry, delete it if it's expired and return
-            # undef.
-            if(time > $data->{expires}) {
-                $c->_session_mongodb_coll->remove({ _id => $sid });
-                return undef;
-            } else {
-                # Nothing's wrong here, send it along.
-                return $data->{expires};
-            }
-        }
+	return undef unless $found;
 
-    } elsif($key =~ /^session:(.*)/) {
-        my $sid = $1;
-        # Assuming it wasn't deleted above, we'll return it.
-        my $data = $c->_session_mongodb_coll->find_one({ _id => $sid });
-        return thaw(decode_base64($data->{session})) if defined($data);
-    }
+	if ($found->{expires} && time() > $found->{expires}) {
+		$self->delete_session_data($id);
+		return undef;
+	}
 
-    return {};
+	return eval($found->{$prefix});
 }
 
 sub store_session_data {
-    my ($c, $key, $data) = @_;
+	my ($self, $key, $data) = @_;
 
-    if(!defined($c->_session_mongodb_conn)) {
-        $c->_mongo_connect;
-    }
+	my ($prefix, $id) = split(/:/, $key);
 
-    if($key =~ /^expires:(.*)/) {
-        my $sid = $1;
-        $c->_session_mongodb_coll->update({ _id => $sid }, { '$set' => { expires => $data } }, { upsert => 1 });
-    } elsif($key =~ /^session:(.*)/) {
-        my $sid = $1;
-        $c->_session_mongodb_coll->update({ _id => $sid }, { '$set' => { session => encode_base64(nfreeze($data)) } }, { upsert => 1 });
-    }
+	# we need to not serialize the expires date, since it comes in as an
+	# integer and we need to preserve that in order to be able to use
+	# mongodb's '$lt' function in delete_expired_sessions()
+	my $serialized;
+	if ($prefix =~ /^expires$/) {
+		$serialized = $data;
+	} else {
+		$serialized = $self->_serialize($data);
+	}
 
-    return;
+	$self->_collection->update({ _id => $id },
+		{ '$set' => { $prefix => $serialized } }, { upsert => 1 });
 }
 
 sub delete_session_data {
-    my ($c, $key) = @_;
+	my ($self, $key) = @_;
 
-    $c->_session_mongodb_coll->remove({ _id => $key });
+	my ($prefix, $id) = split(/:/, $key);
 
-    return;
+	my $found = $self->_collection->find_one({ _id => $id });
+	return unless $found;
+
+	if (exists($found->{$prefix})) {
+		if ((scalar(keys(%$found))) > 2) {
+			$self->_collection->update({ _id => $id },
+				{ '$unset' => { $prefix => 1 }} );
+			return;
+		} else {
+			$self->_collection->remove({ _id => $id });
+		}
+	}
 }
 
 sub delete_expired_sessions {
-    my ($c) = @_;
+	my ($self) = @_;
 
-    $c->_session_mongodb_coll->remove({ expires => { '$lt' => time }})
+	$self->_collection->remove({ 'expires' => { '$lt' => time() } });
 }
 
-sub prepare {
-    my $c = shift;
-
-    if(!defined($c->_session_mongodb_conn)) {
-        $c->_mongo_connect;
-    }
-
-    $c->maybe::next::method(@_);
-}
-
-sub _mongo_connect {
-    my $c = shift;
-
-    my $cfg = $c->_session_plugin_config;
-
-    $c->_session_mongodb_conn(
-        MongoDB::Connection->new(
-            host    => $cfg->{mongodb_host} || '127.0.0.1',
-            port    => $cfg->{mongodb_port} || 27017,
-        )
-    );
-    my $dbname = $cfg->{mongodb_database} || 'catalyst_sessions';
-    $c->_session_mongodb_db($c->_session_mongodb_conn->get_database($dbname));
-    my $colname = $cfg->{mongodb_collection} || 'sessions';
-    $c->_session_mongodb_coll($c->_session_mongodb_db->get_collection($colname));
-}
+__PACKAGE__->meta->make_immutable;
 
 1;
 
@@ -115,56 +181,59 @@ __END__
 
 =head1 NAME
 
-Catalyst::Plugin::Session::Store::MongoDB - MongoDB Session store for Catalyst
+Catalyst::Plugin::Session::Store::MongoDB - MongoDB session store for Catalyst
 
 =head1 SYNOPSIS
 
-    use Catalyst qw/
-        Session
-        Session::Store::MongoDB
-        Session::State::Foo
-    /;
-    
-    MyApp->config->{Plugin::Session} = {
-        expires => 3600,
-        mongodb_server => '127.0.0.1:6379',
-        mongodb_debug => 0 # or 1!
-    };
+In your MyApp.pm:
 
-    # ... in an action:
+	use Catalyst qw/
+		Session
+		Session::Store::MongoDB
+		Session::State::Cookie # or similar
+	/;
+
+and in your MyApp.conf
+
+	<Plugin::Session>
+		hostname foo		# defaults to localhost
+		port 0815		# defaults to 27017
+		dbname test		# defaults to catalyst
+		collectionname s2	# defaults to session
+	</Plugin::Session>
+
+Then you can use it as usual:
+
     $c->session->{foo} = 'bar'; # will be saved
 
 =head1 DESCRIPTION
 
-C<Catalyst::Plugin::Session::Store::MongoDB> is a session storage plugin for
-Catalyst that uses MongoDB (L<http://www.mongodb.org>).
+C<Catalyst::Plugin::Session::Store::MongoDB> is a session storage plugin using
+MongoDB (L<http://www.mongodb.org>) as it's backend.
 
-=head1 NOTES
+=head1 USAGE
 
 =over 4
 
 =item B<Expired Sessions>
 
-This store automatically expires sessions when they expire.
+This store automatically deletes sessions when they expire. Additionally it
+implements the optional delete_expired_sessions() method.
 
 =back
 
-=head1 WARNING
-
-This module is currently untested, outside of the unit tests it ships with.
-It will eventually be used with a busy site, but is currently unproven.
-Patches are welcome!
-
 =head1 AUTHOR
 
-Cory G Watson, C<< <gphat at cpan.org> >>
+    Stefan Völkel
+    bd@bc-bd.org
+    http://bc-bd.org
 
-=head1 COPYRIGHT & LICENSE
+=head1 COPYRIGHT
 
-Copyright 2010 Cory G Watson
+Copyright 2010 Stefan Völkel <bd@bc-bd.org>
 
 This program is free software; you can redistribute it and/or modify it
-under the terms of either: the GNU General Public License as published
+under the terms of the GNU General Public License v2 as published
 by the Free Software Foundation; or the Artistic License.
 
 See http://dev.perl.org/licenses/ for more information.
